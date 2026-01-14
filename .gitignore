@@ -1,0 +1,39 @@
+# Xcode
+.DS_Store
+*/.DS_Store
+*.swp
+*.lock
+*~.nib
+*.pbxuser
+*.perspectivev3
+*.mode1v3
+*.mode2v3
+build/
+DerivedData/
+*.hmap
+*.ipa
+*.pkg
+*.dSYM/
+*.xccheckout
+*.moved-aside
+*.xcuserstate
+*.xcusernamed
+*.upp
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# Swift Package Manager
+.build/
+Packages/
+Package.pins
+.apple/
+
+# User Settings
+*.xcuserdata/
+
+# Other
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
