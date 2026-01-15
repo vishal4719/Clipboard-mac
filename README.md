@@ -17,6 +17,7 @@ A powerful, native macOS Clipboard Manager and Drag & Drop Tray application buil
 1.  Download the latest release (or build from source).
 2.  Move `Clipboard.app` to your Applications folder.
 3.  Open the app. You may need to grant Accessibility permissions for the "Paste on Click" feature to work.
+4.  Option+v to open clipboard
 
 ## Development
 
