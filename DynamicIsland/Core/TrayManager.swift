@@ -33,7 +33,7 @@ class TrayManager: ObservableObject {
         
         let item = TrayItem(name: filename, type: .image, data: data)
         saveAndPublish(item)
-        print("✅ Added image to tray: \(filename)")
+        print(" Added image to tray: \(filename)")
     }
     
     func addText(_ text: String, filename: String = "Text") {
@@ -41,7 +41,7 @@ class TrayManager: ObservableObject {
         
         let item = TrayItem(name: filename, type: .text, data: data)
         saveAndPublish(item)
-        print("✅ Added text to tray: \(filename)")
+        print(" Added text to tray: \(filename)")
     }
     
     func addFile(_ url: URL) {
@@ -79,9 +79,9 @@ class TrayManager: ObservableObject {
                 
                 let item = TrayItem(name: filename, type: .file, data: pathData)
                 saveAndPublish(item)
-                print("✅ Added file to tray: \(filename)")
+                print("Added file to tray: \(filename)")
             } catch {
-                print("❌ Failed to copy file: \(error)")
+                print("Failed to copy file: \(error)")
             }
         }
     }
@@ -105,19 +105,19 @@ class TrayManager: ObservableObject {
         case .text:
             if let text = String(data: item.data, encoding: .utf8) {
                 pb.setString(text, forType: .string)
-                print("📋 Copied text from tray: \(item.name)")
+                print("Copied text from tray: \(item.name)")
             }
         case .image:
             if let image = NSImage(data: item.data) {
                 pb.writeObjects([image])
-                print("📋 Copied image from tray: \(item.name)")
+                print("Copied image from tray: \(item.name)")
             }
         case .file:
             if let filename = String(data: item.data, encoding: .utf8),
                let storageDir = getStorageDirectory() {
                 let fileURL = storageDir.appendingPathComponent(filename)
                 pb.writeObjects([fileURL as NSURL])
-                print("📋 Copied file from tray: \(item.name)")
+                print("Copied file from tray: \(item.name)")
             }
         }
     }

@@ -69,9 +69,9 @@ final class HotkeyManager {
         )
         
         if registerStatus == noErr {
-            print("✅ Hotkey registered: Option+V")
+            print(" Hotkey registered: Option+V")
         } else {
-            print("❌ Failed to register hotkey: \(registerStatus)")
+            print(" Failed to register hotkey: \(registerStatus)")
         }
     }
     

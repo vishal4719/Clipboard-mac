@@ -46,7 +46,7 @@ final class ClipboardManager: ObservableObject {
                let bundleId = frontApp.bundleIdentifier {
                 
                 if sensitiveApps.contains(where: { bundleId.caseInsensitiveCompare($0) == .orderedSame }) {
-                    print("🔒 Privacy: Ignored copy from \(frontApp.localizedName ?? bundleId)")
+                    print(" Privacy: Ignored copy from \(frontApp.localizedName ?? bundleId)")
                     return
                 }
             }
@@ -189,7 +189,7 @@ final class ClipboardManager: ObservableObject {
     func addFileText(_ text: String, filename: String? = nil) {
         // Add filename as prefix if provided
         let content = if let filename = filename {
-            "📄 \(filename)\n\n\(text)"
+            " \(filename)\n\n\(text)"
         } else {
             text
         }

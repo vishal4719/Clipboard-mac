@@ -10,7 +10,7 @@ class PasteManager {
     func pasteItem(_ item: ClipboardItem) {
         // Simply copy the item to clipboard
         copyToClipboard(item)
-        print("✅ Copied to clipboard - Press Cmd+V to paste")
+        print(" Copied to clipboard - Press Cmd+V to paste")
     }
     
     // MARK: - Paste String
@@ -18,7 +18,7 @@ class PasteManager {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(string, forType: .string)
-        print("📋 String copied to clipboard: \(string)")
+        print(" String copied to clipboard: \(string)")
         
         // Simulate Paste
         simulateCmdV()
@@ -36,11 +36,11 @@ class PasteManager {
             
         case .image(let data):
             guard let image = NSImage(data: data) else {
-                print("❌ Failed to decode image")
+                print("Failed to decode image")
                 return
             }
             pb.writeObjects([image])
-            print("📋 Image copied to clipboard")
+            print("Image copied to clipboard")
         }
     }
     // MARK: - Simulate Cmd+V
@@ -69,6 +69,6 @@ class PasteManager {
         guard let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false) else { return }
         cmdUp.post(tap: .cghidEventTap)
         
-        print("⌨️ Simulated Cmd+V (CGEvent)")
+        print("Simulated Cmd+V (CGEvent)")
     }
 }

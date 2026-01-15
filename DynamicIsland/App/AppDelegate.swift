@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "About", action: #selector(showAbout), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
         
@@ -122,6 +123,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     @objc private func checkForUpdates() {
         UpdateManager.shared.checkForUpdates(quietly: false)
+    }
+
+    @objc private func showAbout() {
+        let alert = NSAlert()
+        alert.messageText = "About VClipboard"
+        alert.informativeText = "Developed by Vishal Gupta\n\nThe ultimate clipboard manager for macOS."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "How to Use")
+        
+        // Set app icon if available
+        alert.icon = NSImage(named: "AppIcon")
+        
+        let response = alert.runModal()
+        if response == .alertSecondButtonReturn {
+            if let url = URL(string: "https://vclipboard.vsite.tech/how-to-use") {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
     
     // MARK: - Toggle Clipboard Window

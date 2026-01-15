@@ -83,7 +83,7 @@ class DropZoneWindow: NSPanel {
     }
     
     private func handleDroppedFiles(_ urls: [URL]) {
-        print("📥 Files dropped: \(urls.count)")
+        print("Files dropped: \(urls.count)")
         
         for url in urls {
             processFile(url)
@@ -102,19 +102,19 @@ class DropZoneWindow: NSPanel {
             // Load image and add to clipboard
             if let image = NSImage(contentsOf: url) {
                 ClipboardManager.shared.addFileImage(image)
-                print("✅ Added image: \(url.lastPathComponent)")
+                print("Added image: \(url.lastPathComponent)")
             }
         } else if fileExtension == "txt" {
             // Read text file
             if let text = try? String(contentsOf: url, encoding: .utf8) {
                 ClipboardManager.shared.addFileText(text, filename: url.lastPathComponent)
-                print("✅ Added text file: \(url.lastPathComponent)")
+                print("Added text file: \(url.lastPathComponent)")
             }
         } else {
             // For other files, just add the filename/path as reference
-            let fileInfo = "📄 \(url.lastPathComponent)\nPath: \(url.path)"
+            let fileInfo = " \(url.lastPathComponent)\nPath: \(url.path)"
             ClipboardManager.shared.addFileText(fileInfo, filename: url.lastPathComponent)
-            print("✅ Added file reference: \(url.lastPathComponent)")
+            print("Added file reference: \(url.lastPathComponent)")
         }
     }
     

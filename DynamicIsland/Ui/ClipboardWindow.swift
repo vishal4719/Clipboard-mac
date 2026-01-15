@@ -37,6 +37,7 @@ class ClipboardWindow: NSPanel {
         self.styleMask.insert(.fullSizeContentView) 
         self.titlebarAppearsTransparent = true
         self.titleVisibility = .hidden
+        self.isMovableByWindowBackground = true
     }
     
     private func setupContent() {

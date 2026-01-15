@@ -83,9 +83,9 @@ class AccessibilityManager {
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             DispatchQueue.main.async {
                 if granted {
-                    print("✅ Notification permissions granted")
+                    print(" Notification permissions granted")
                 } else {
-                    print("⚠️ Notification permissions denied")
+                    print("Notification permissions denied")
                 }
                 completion?(granted)
             }
@@ -105,7 +105,7 @@ class AccessibilityManager {
     func sendTestNotification() {
         let content = UNMutableNotificationContent()
         content.title = "Clipboard"
-        content.body = "Notifications are working! 🎉"
+        content.body = "Notifications are working!"
         content.sound = .default
         
         let request = UNNotificationRequest(
@@ -116,7 +116,7 @@ class AccessibilityManager {
         
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
-                print("❌ Error sending notification: \(error)")
+                print(" Error sending notification: \(error)")
             }
         }
     }
@@ -141,19 +141,19 @@ class AccessibilityManager {
             do {
                 if SMAppService.mainApp.status == .enabled {
                     try SMAppService.mainApp.unregister()
-                    print("✅ Launch at login disabled")
+                    print(" Launch at login disabled")
                 } else {
                     try SMAppService.mainApp.register()
-                    print("✅ Launch at login enabled")
+                    print(" Launch at login enabled")
                 }
             } catch {
-                print("❌ Failed to toggle launch at login: \(error)")
+                print("Failed to toggle launch at login: \(error)")
             }
         } else {
             // Legacy method for older macOS
             let isEnabled = UserDefaults.standard.bool(forKey: "launchAtLogin")
             UserDefaults.standard.set(!isEnabled, forKey: "launchAtLogin")
-            print(isEnabled ? "✅ Launch at login disabled" : "✅ Launch at login enabled")
+            print(isEnabled ? "Launch at login disabled" : "Launch at login enabled")
         }
     }
     
@@ -197,10 +197,10 @@ class AccessibilityManager {
             alert.messageText = "Permission Status"
             
             var statusText = ""
-            statusText += "Accessibility: \(accessibilityGranted ? "✅ Granted" : "❌ Not Granted")\n"
-            statusText += "Input Monitoring: \(inputMonitoringGranted ? "✅ Granted" : "❌ Not Granted")\n"
-            statusText += "Notifications: \(notificationStatus == .authorized ? "✅ Granted" : "❌ Not Granted")\n"
-            statusText += "Launch at Login: \(self.isLaunchAtLoginEnabled() ? "✅ Enabled" : "❌ Disabled")"
+            statusText += "Accessibility: \(accessibilityGranted ? " Granted" : " Not Granted")\n"
+            statusText += "Input Monitoring: \(inputMonitoringGranted ? "Granted" : " Not Granted")\n"
+            statusText += "Notifications: \(notificationStatus == .authorized ? "Granted" : " Not Granted")\n"
+            statusText += "Launch at Login: \(self.isLaunchAtLoginEnabled() ? "Enabled" : "Disabled")"
             
             alert.informativeText = statusText
             alert.alertStyle = .informational
@@ -238,29 +238,29 @@ class AccessibilityManager {
     func checkAllPermissions() {
         // Check accessibility
         if hasAccessibilityPermissions() {
-            print("✅ Accessibility permissions granted")
+            print(" Accessibility permissions granted")
         } else {
-            print("⚠️ Accessibility permissions not granted")
+            print(" Accessibility permissions not granted")
         }
         
         // Check input monitoring
         if hasInputMonitoringPermissions() {
-            print("✅ Input monitoring permissions granted")
+            print(" Input monitoring permissions granted")
         } else {
-            print("⚠️ Input monitoring permissions not granted")
+            print(" Input monitoring permissions not granted")
         }
         
         // Check notifications
         checkNotificationPermissions { status in
             switch status {
             case .authorized:
-                print("✅ Notification permissions granted")
+                print("Notification permissions granted")
             case .denied:
-                print("⚠️ Notification permissions denied")
+                print(" Notification permissions denied")
             case .notDetermined:
-                print("⚠️ Notification permissions not determined")
+                print("Notification permissions not determined")
             default:
-                print("⚠️ Notification permissions: \(status.rawValue)")
+                print(" Notification permissions: \(status.rawValue)")
             }
         }
     }
