@@ -38,8 +38,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     // MARK: - Drag Monitor
     private var isWindowOpening = false
+    private var dragStartLocation: NSPoint?
     
     private func setupDragMonitor() {
+        // Record start position to differentiate clicks from drags
+        NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+            self?.dragStartLocation = NSEvent.mouseLocation
+        }
+        NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
+            self?.dragStartLocation = nil
+        }
+        
         // Monitor for drag operations globally
         dragMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] event in
             self?.checkDragPosition(event)
@@ -51,15 +60,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isWindowOpening else { return } // Debounce
         
         let mouseLocation = NSEvent.mouseLocation
+        
+        // 1. Distance Check: Ignore simple clicks/micro-drags
+        if let start = dragStartLocation {
+            let dx = mouseLocation.x - start.x
+            let dy = mouseLocation.y - start.y
+            if (dx * dx + dy * dy) < 2500 { return } // Threshold: 50 points
+        }
+        
+        // 2. Type Check: Only open for files
+        let pasteboard = NSPasteboard(name: .drag)
+        guard let types = pasteboard.types, types.contains(.fileURL) else { return }
+        
         let menuBarHeight: CGFloat = 40
         let triggerZone = screen.frame.maxY - menuBarHeight
         
         // If mouse is near the top of the screen (menu bar area)
         if mouseLocation.y > triggerZone {
-            // Verify if dragging files
-            let pasteboard = NSPasteboard(name: .drag)
-            guard let types = pasteboard.types, types.contains(.fileURL) else { return }
-            
             // Open window on tray if not already visible
             if clipboardWindow == nil || !clipboardWindow!.isVisible {
                 isWindowOpening = true
