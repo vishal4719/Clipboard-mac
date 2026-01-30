@@ -56,6 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         // If mouse is near the top of the screen (menu bar area)
         if mouseLocation.y > triggerZone {
+            // Verify if dragging files
+            let pasteboard = NSPasteboard(name: .drag)
+            guard let types = pasteboard.types, types.contains(.fileURL) else { return }
+            
             // Open window on tray if not already visible
             if clipboardWindow == nil || !clipboardWindow!.isVisible {
                 isWindowOpening = true

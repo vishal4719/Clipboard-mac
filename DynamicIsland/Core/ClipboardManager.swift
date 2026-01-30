@@ -30,7 +30,7 @@ final class ClipboardManager: ObservableObject {
 
     // MARK: - Monitoring
     private func startMonitoring() {
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             self?.checkClipboard()
         }
     }
@@ -62,9 +62,20 @@ final class ClipboardManager: ObservableObject {
         if let image = NSImage(pasteboard: pb) {
             addImageItem(image)
         }
-        // Then try text
+        // Then try text (standard)
         else if let text = pb.string(forType: .string), !text.isEmpty {
             addTextItem(text)
+        }
+        // Fallback: Try to read RTF or HTML and convert to string
+        else if let rtfData = pb.data(forType: .rtf) {
+            if let attributedString = NSAttributedString(rtf: rtfData, documentAttributes: nil) {
+                addTextItem(attributedString.string)
+            }
+        }
+        else if let htmlData = pb.data(forType: .html) {
+             if let attributedString = NSAttributedString(html: htmlData, options: [:], documentAttributes: nil) {
+                addTextItem(attributedString.string)
+            }
         }
     }
     

@@ -4,7 +4,12 @@ class ClipboardWindow: NSPanel {
     
     private var clickMonitor: Any?
     private var currentTab: Tab = .clipboard
+
     private var tabButtons: [Tab: NSButton] = [:]
+    
+    // Pinning State
+    private var isPinned: Bool = false
+    private var pinButton: NSButton?
     
     enum Tab {
         case clipboard
@@ -112,6 +117,19 @@ class ClipboardWindow: NSPanel {
         
 
         
+        // Pin Window Button (Left of Clear All)
+        let pinBtn = NSButton(frame: NSRect(x: 310, y: 5, width: 30, height: 30))
+        pinBtn.image = NSImage(systemSymbolName: "pin", accessibilityDescription: "Pin Window")
+        pinBtn.bezelStyle = .rounded
+        pinBtn.isBordered = false
+        pinBtn.wantsLayer = true
+        pinBtn.title = ""
+        pinBtn.contentTintColor = .gray
+        pinBtn.target = self
+        pinBtn.action = #selector(toggleWindowPin)
+        tabBar.addSubview(pinBtn)
+        self.pinButton = pinBtn
+        
         // Clear All Button (Right aligned)
         let clearButton = NSButton(frame: NSRect(x: 350, y: 5, width: 40, height: 30))
         clearButton.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "Clear All")
@@ -136,6 +154,14 @@ class ClipboardWindow: NSPanel {
         if let contentView = self.contentView {
             updateContent(in: contentView)
         }
+    }
+    
+    @objc private func toggleWindowPin() {
+        isPinned.toggle()
+        
+        let iconName = isPinned ? "pin.fill" : "pin"
+        pinButton?.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)
+        pinButton?.contentTintColor = isPinned ? .systemYellow : .gray
     }
     
     
@@ -222,16 +248,32 @@ class ClipboardWindow: NSPanel {
             emptyLabel.frame = NSRect(x: 50, y: 220, width: 300, height: 60)
             container.addSubview(emptyLabel)
         } else {
-            // Show up to 12 items
-            var yPosition: CGFloat = 430 // Matched to Tray padding (was 455)
+            // Scroll View
+            let scrollView = NSScrollView(frame: NSRect(x: 0, y: 40, width: 400, height: 460))
+            scrollView.drawsBackground = false
+            scrollView.hasVerticalScroller = false // Hidden but scrollable
+            scrollView.automaticallyAdjustsContentInsets = false
+            
+            // Document View (Flipped for top-down layout)
+            let documentView = FlippedView(frame: NSRect(x: 0, y: 0, width: 400, height: 0))
+            
+            var yPosition: CGFloat = 10
             let itemHeight: CGFloat = 35
             
-            for (index, item) in items.prefix(12).enumerated() {
+            for (index, item) in items.enumerated() {
                 let itemView = createClipboardItemView(item: item, index: index, yPosition: yPosition)
                 itemView.frame.size.height = itemHeight
-                container.addSubview(itemView)
-                yPosition -= (itemHeight + 5)
+                documentView.addSubview(itemView)
+                yPosition += (itemHeight + 5)
             }
+            
+            documentView.frame.size.height = yPosition + 20 // Add some bottom padding
+            scrollView.documentView = documentView
+            
+            // Scroll to top
+            documentView.scroll(NSPoint(x: 0, y: 0))
+            
+            container.addSubview(scrollView)
         }
         
         // Instructions
@@ -799,6 +841,9 @@ extension ClipboardWindow {
             let clickLocation = NSEvent.mouseLocation
             let windowFrame = self.frame
             
+            // If pinned, IGNORE outside clicks (don't close)
+            if self.isPinned { return }
+            
             if !NSPointInRect(clickLocation, windowFrame) {
                 self.close()
             }
@@ -862,6 +907,10 @@ class DraggableTrayItemView: NSView, NSDraggingSource {
     var trayItem: TrayItem?
     var onClick: (() -> Void)?
     private var dragStartLocation: NSPoint?
+    
+    override var mouseDownCanMoveWindow: Bool {
+        return false
+    }
     
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         return context == .outsideApplication ? .copy : .copy
