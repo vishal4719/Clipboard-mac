@@ -120,6 +120,9 @@ class TrayManager: ObservableObject {
                 print("Copied file from tray: \(item.name)")
             }
         }
+        
+        // Don't let the clipboard monitor re-record our own write into history.
+        ClipboardManager.shared.acknowledgeSelfWrite()
     }
     
     // MARK: - Persistence

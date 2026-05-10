@@ -13,11 +13,28 @@ class PasteManager {
         print(" Copied to clipboard - Press Cmd+V to paste")
     }
     
+    /// Pastes the "primary" representation of the item into the active app and auto-types ⌘V.
+    /// For images that have OCR'd text available, this pastes the recognized text instead
+    /// (mirrors the in-window click behavior). Used by the global quick-paste hotkeys.
+    func pasteItemSmart(_ item: ClipboardItem) {
+        if item.isImage, item.hasOCRText, let ocr = item.ocrText, !ocr.isEmpty {
+            pasteString(ocr) // pasteString already simulates ⌘V
+            return
+        }
+        copyToClipboard(item)
+        // Tiny delay so the pasteboard change has settled before we synthesize ⌘V.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { [weak self] in
+            self?.simulateCmdV()
+        }
+    }
+    
     // MARK: - Paste String
     func pasteString(_ string: String) {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(string, forType: .string)
+        // Tell the monitor this write came from us so it doesn't re-record it.
+        ClipboardManager.shared.acknowledgeSelfWrite()
         print(" String copied to clipboard: \(string)")
         
         // Simulate Paste
@@ -42,6 +59,9 @@ class PasteManager {
             pb.writeObjects([image])
             print("Image copied to clipboard")
         }
+        
+        // Tell the monitor this write came from us so it doesn't re-record it.
+        ClipboardManager.shared.acknowledgeSelfWrite()
     }
     // MARK: - Simulate Cmd+V
     func simulateCmdV() {

@@ -152,10 +152,11 @@ class DropZoneView: NSView {
     
     private func setupView() {
         wantsLayer = true
-        layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.3).cgColor
+        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.28).cgColor
         layer?.cornerRadius = 25
-        layer?.borderWidth = 2
-        layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.6).cgColor
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = 1.5
+        layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.6).cgColor
     }
     
     override func draw(_ dirtyRect: NSRect) {
@@ -193,8 +194,8 @@ class DropZoneView: NSView {
     // MARK: - Drag and Drop
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         isDragging = true
-        layer?.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.5).cgColor
-        layer?.borderColor = NSColor.systemGreen.cgColor
+        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.5).cgColor
+        layer?.borderColor = NSColor.controlAccentColor.cgColor
         needsDisplay = true
         onDragEntered?()
         return .copy
@@ -202,8 +203,8 @@ class DropZoneView: NSView {
     
     override func draggingExited(_ sender: NSDraggingInfo?) {
         isDragging = false
-        layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.3).cgColor
-        layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.6).cgColor
+        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.28).cgColor
+        layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.6).cgColor
         needsDisplay = true
         onDragExited?()
     }
@@ -222,14 +223,14 @@ class DropZoneView: NSView {
     }
     
     func showSuccessFeedback() {
-        // Flash green
+        // Flash with the accent color, then settle back
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
-            layer?.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.8).cgColor
+            layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.75).cgColor
         } completionHandler: { [weak self] in
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.3
-                self?.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.3).cgColor
+                self?.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.28).cgColor
             }
         }
         

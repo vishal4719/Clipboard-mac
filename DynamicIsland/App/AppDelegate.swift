@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var clipboardWindow: ClipboardWindow?
     var dragMonitor: Any?
     
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Set up as background/menu bar app
         NSApp.setActivationPolicy(.accessory)
@@ -20,6 +21,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Register global hotkey (Option+V)
         HotkeyManager.shared.registerHotkey { [weak self] in
             self?.toggleClipboardWindow()
+        }
+        
+        // Register global quick-paste hotkeys: ⌥⌘1 … ⌥⌘9
+        // These let the user paste the Nth most-recent clipboard item without
+        // ever opening the window. OCR'd images paste their recognized text.
+        HotkeyManager.shared.registerQuickPasteHotkeys { index in
+            let items = ClipboardManager.shared.items
+            guard index >= 1, index <= items.count else {
+                NSSound.beep()
+                return
+            }
+            let item = items[index - 1]
+            PasteManager.shared.pasteItemSmart(item)
         }
         
         // Request Accessibility Permissions on Launch
@@ -106,6 +120,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
+        let aiItem = NSMenuItem(title: "Try Apple Intelligence…", action: #selector(showAIDemo), keyEquivalent: "i")
+        aiItem.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(aiItem)
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "About", action: #selector(showAbout), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
@@ -129,6 +147,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func clearHistory() {
         ClipboardManager.shared.clearAll()
     }
+
+    @objc private func showAIDemo() {
+        AIDemoWindow.show()
+    }
     
     @objc private func requestPermissions() {
         // Show accessibility permission dialog
@@ -148,7 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showAbout() {
         let alert = NSAlert()
-        alert.messageText = "About VClipboard"
+        alert.messageText = "About Clippy"
         alert.informativeText = "Developed by Vishal Gupta\n\nThe ultimate clipboard manager for macOS."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")

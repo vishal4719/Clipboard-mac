@@ -7,12 +7,15 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
     let date: Date
     let preview: String // Text preview or image description
     var isPinned: Bool = false
+    /// Text extracted from images via on-device Vision OCR (nil if not yet processed or no text detected).
+    var ocrText: String? = nil
     
     init(id: UUID = UUID(), content: Content, date: Date = Date(), isPinned: Bool = false) {
         self.id = id
         self.content = content
         self.date = date
         self.isPinned = isPinned
+        self.ocrText = nil
         
         switch content {
         case .text(let str):
@@ -20,6 +23,20 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
         case .image:
             self.preview = "📷 Image"
         }
+    }
+    
+    /// All text that should match a search query for this item.
+    var searchableText: String {
+        if let ocr = ocrText, !ocr.isEmpty {
+            return preview + "\n" + ocr
+        }
+        return preview
+    }
+    
+    /// True if OCR has produced any usable text for an image item.
+    var hasOCRText: Bool {
+        guard let ocr = ocrText else { return false }
+        return !ocr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
     enum Content: Codable, Equatable {
@@ -84,6 +101,7 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
         self.content = content
         self.date = date
         self.preview = Self.makePreview(from: content)
+        self.ocrText = nil
     }
     
     // Get NSImage from image content

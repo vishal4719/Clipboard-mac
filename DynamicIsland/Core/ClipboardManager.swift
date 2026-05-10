@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import Vision
 
 final class ClipboardManager: ObservableObject {
 
@@ -26,6 +27,15 @@ final class ClipboardManager: ObservableObject {
     private init() {
         loadItems()
         startMonitoring()
+        // Run OCR for any image items that were saved before the OCR feature
+        // existed (or that finished partially). Cheap because history is bounded.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            let snapshot = DispatchQueue.main.sync { self.items }
+            for item in snapshot where item.isImage && !item.hasOCRText {
+                self.ensureOCR(for: item)
+            }
+        }
     }
 
     // MARK: - Monitoring
@@ -120,6 +130,67 @@ final class ClipboardManager: ObservableObject {
             self.trimItems()
             self.saveItems()
         }
+        
+        // Kick off OCR in the background. Uses the FULL image (not the thumbnail)
+        // so we don't lose detail for text recognition.
+        runOCR(on: image, itemID: item.id)
+    }
+    
+    // MARK: - OCR (on-device, free, via Vision)
+    
+    /// Performs text recognition on the given image and updates the corresponding
+    /// `ClipboardItem.ocrText` on the main queue when complete.
+    private func runOCR(on image: NSImage, itemID: UUID) {
+        // Convert to CGImage for Vision
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return
+        }
+        
+        // Run on a background queue so we don't block the clipboard timer
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let request = VNRecognizeTextRequest { [weak self] request, error in
+                guard let self = self,
+                      error == nil,
+                      let observations = request.results as? [VNRecognizedTextObservation] else {
+                    return
+                }
+                
+                let lines = observations.compactMap { $0.topCandidates(1).first?.string }
+                let recognized = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                guard !recognized.isEmpty else { return }
+                self.applyOCRText(recognized, to: itemID)
+            }
+            
+            // .accurate is slower but much better quality on screenshots/UI text.
+            // Apple Silicon handles a 200x200 thumbnail in ~50-150ms.
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            do {
+                try handler.perform([request])
+            } catch {
+                print("[OCR] \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    /// Updates an item's OCR text on the main queue and persists.
+    private func applyOCRText(_ text: String, to itemID: UUID) {
+        DispatchQueue.main.async {
+            guard let index = self.items.firstIndex(where: { $0.id == itemID }) else { return }
+            self.items[index].ocrText = text
+            self.saveItems()
+            // Notify observers so the UI can update if the window is open.
+            NotificationCenter.default.post(name: .clipboardOCRDidUpdate, object: itemID)
+        }
+    }
+    
+    /// Run OCR on demand for an item that didn't have it yet (e.g. items saved before this feature).
+    func ensureOCR(for item: ClipboardItem) {
+        guard item.isImage, !item.hasOCRText, let image = item.nsImage() else { return }
+        runOCR(on: image, itemID: item.id)
     }
     
     // MARK: - Item Management
@@ -155,6 +226,18 @@ final class ClipboardManager: ObservableObject {
         changeCount = pb.changeCount
     }
     
+    /// Tells the manager that we just wrote to the system pasteboard ourselves
+    /// (e.g. a "paste from history" action). Call this *immediately after* the
+    /// `pb.setString(...)` / `pb.writeObjects(...)` so the next monitor tick
+    /// doesn't re-record our own write as a fresh history entry.
+    ///
+    /// Without this call, pasting item #2 would re-copy that text to the
+    /// pasteboard, the monitor would catch the change, and a duplicate would
+    /// be inserted at position #1 — pushing every other item one slot down.
+    func acknowledgeSelfWrite() {
+        changeCount = NSPasteboard.general.changeCount
+    }
+    
     // MARK: - Pinning & Management
     func togglePin(for item: ClipboardItem) {
         if let index = items.firstIndex(where: { $0.id == item.id }) {
@@ -188,7 +271,41 @@ final class ClipboardManager: ObservableObject {
     private func loadItems() {
         if let data = UserDefaults.standard.data(forKey: storageKey),
            let decoded = try? JSONDecoder().decode([ClipboardItem].self, from: data) {
-            items = decoded // Remove prefix(limit) to allow pins to stay
+            // Collapse runs of consecutive identical items. This cleans up any
+            // duplicates accumulated before the self-write suppression existed,
+            // while preserving real "I copied X, then later copied X again" entries.
+            let cleaned = Self.removeConsecutiveDuplicates(decoded)
+            items = cleaned
+            if cleaned.count != decoded.count {
+                saveItems()
+            }
+        }
+    }
+    
+    private static func removeConsecutiveDuplicates(_ source: [ClipboardItem]) -> [ClipboardItem] {
+        var result: [ClipboardItem] = []
+        result.reserveCapacity(source.count)
+        for item in source {
+            if let last = result.last, sameContent(last, item) {
+                // Pinned state from either copy is preserved on the kept entry.
+                if item.isPinned, !last.isPinned {
+                    result[result.count - 1].isPinned = true
+                }
+                continue
+            }
+            result.append(item)
+        }
+        return result
+    }
+    
+    private static func sameContent(_ a: ClipboardItem, _ b: ClipboardItem) -> Bool {
+        switch (a.content, b.content) {
+        case (.text(let s1), .text(let s2)):
+            return s1 == s2
+        case (.image(let d1), .image(let d2)):
+            return d1.prefix(1024) == d2.prefix(1024)
+        default:
+            return false
         }
     }
     
@@ -210,4 +327,12 @@ final class ClipboardManager: ObservableObject {
     deinit {
         timer?.invalidate()
     }
+}
+
+// MARK: - Notifications
+
+extension Notification.Name {
+    /// Posted (on the main queue) when OCR finishes for a clipboard item.
+    /// `object` is the item's `UUID`.
+    static let clipboardOCRDidUpdate = Notification.Name("ClipboardManager.OCRDidUpdate")
 }
