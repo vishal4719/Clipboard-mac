@@ -73,7 +73,7 @@ Copy a screenshot, a meme, or a PDF screen-grab and Clippy automatically reads t
 
 ## 🙏 Credits
 
-Built by [@vishal4719](https://github.com/vishal4719). If Clippy saves you time, [buy me a coffee](https://buymeacoffee.com/) ☕
+Built by [@vishal4719](https://github.com/vishal4719). If Clippy saves you time, [buy me a coffee](https://buymeacoffee.com/vishal4719) ☕
 
 **Full changelog:** v1.0.0...v3.0
 
