@@ -5,24 +5,18 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
     let id: UUID
     let content: Content
     let date: Date
-    let preview: String // Text preview or image description
+    let preview: String
     var isPinned: Bool = false
     /// Text extracted from images via on-device Vision OCR (nil if not yet processed or no text detected).
     var ocrText: String? = nil
     
-    init(id: UUID = UUID(), content: Content, date: Date = Date(), isPinned: Bool = false) {
+    init(id: UUID = UUID(), content: Content, date: Date = Date(), isPinned: Bool = false, ocrText: String? = nil) {
         self.id = id
         self.content = content
         self.date = date
         self.isPinned = isPinned
-        self.ocrText = nil
-        
-        switch content {
-        case .text(let str):
-            self.preview = str.trimmingCharacters(in: .whitespacesAndNewlines)
-        case .image:
-            self.preview = "📷 Image"
-        }
+        self.ocrText = ocrText
+        self.preview = Self.makePreview(from: content)
     }
     
     /// All text that should match a search query for this item.
@@ -41,7 +35,7 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
     
     enum Content: Codable, Equatable {
         case text(String)
-        case image(Data) // Stored as compressed JPEG/PNG thumbnail
+        case image(Data) // Full-quality PNG (preferred) or high-quality JPEG
         
         enum CodingKeys: String, CodingKey {
             case type, data
@@ -64,8 +58,8 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
             let type = try container.decode(String.self, forKey: .type)
             
             if type == "text" {
-                let string = try container.decode(String.self, forKey: .data)
-                self = .text(string)
+                let text = try container.decode(String.self, forKey: .data)
+                self = .text(text)
             } else {
                 let data = try container.decode(Data.self, forKey: .data)
                 self = .image(data)
@@ -83,11 +77,9 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
         return false
     }
     
-    // Generate preview text
     static func makePreview(from content: Content) -> String {
         switch content {
         case .text(let string):
-            // First 100 characters or first 2 lines
             let lines = string.components(separatedBy: .newlines)
             let previewLines = lines.prefix(2).joined(separator: " ")
             return String(previewLines.prefix(100))
@@ -96,15 +88,6 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
         }
     }
     
-    init(id: UUID = UUID(), content: Content, date: Date = Date()) {
-        self.id = id
-        self.content = content
-        self.date = date
-        self.preview = Self.makePreview(from: content)
-        self.ocrText = nil
-    }
-    
-    // Get NSImage from image content
     func nsImage() -> NSImage? {
         if case .image(let data) = content {
             return NSImage(data: data)
@@ -112,7 +95,6 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
         return nil
     }
     
-    // Get text from text content
     func text() -> String? {
         if case .text(let string) = content {
             return string
@@ -123,11 +105,12 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
 
 // MARK: - Image Utilities
 extension NSImage {
-    // Resize image to fit within maxSize while maintaining aspect ratio
     func resized(to maxSize: CGSize) -> NSImage {
+        guard size.width > 0, size.height > 0 else { return self }
+        
         let widthRatio = maxSize.width / size.width
         let heightRatio = maxSize.height / size.height
-        let ratio = min(widthRatio, heightRatio)
+        let ratio = min(widthRatio, heightRatio, 1.0)
         
         let newSize = CGSize(
             width: size.width * ratio,
@@ -144,13 +127,51 @@ extension NSImage {
         return newImage
     }
     
-    // Convert to JPEG data with compression
-    func jpegData(compressionQuality: CGFloat = 0.7) -> Data? {
-        guard let tiffData = tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffData) else {
-            return nil
-        }
-        
+    func jpegData(compressionQuality: CGFloat = 0.92) -> Data? {
+        guard let bitmap = bitmapRepForExport() else { return nil }
         return bitmap.representation(using: .jpeg, properties: [.compressionFactor: compressionQuality])
+    }
+
+    /// Lossless PNG — preferred for screenshots / UI captures.
+    func pngData() -> Data? {
+        guard let bitmap = bitmapRepForExport() else { return nil }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+
+    /// Pixel-accurate bitmap at the image's native pixel size (not just point size).
+    private func bitmapRepForExport() -> NSBitmapImageRep? {
+        // Prefer an existing bitmap rep when the image came from pasteboard/file.
+        if let existing = representations.compactMap({ $0 as? NSBitmapImageRep }).first,
+           existing.pixelsWide > 0, existing.pixelsHigh > 0 {
+            return existing
+        }
+
+        guard let cgImage = cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            // Fallback: draw into a bitmap at point size * backing scale.
+            guard let tiffData = tiffRepresentation,
+                  let bitmap = NSBitmapImageRep(data: tiffData) else {
+                return nil
+            }
+            return bitmap
+        }
+
+        return NSBitmapImageRep(cgImage: cgImage)
+    }
+
+    /// Downscale only when the longest edge exceeds `maxEdge` (points/pixels).
+    func capped(toMaxEdge maxEdge: CGFloat) -> NSImage {
+        let pixelW: CGFloat
+        let pixelH: CGFloat
+        if let rep = representations.compactMap({ $0 as? NSBitmapImageRep }).first {
+            pixelW = CGFloat(rep.pixelsWide)
+            pixelH = CGFloat(rep.pixelsHigh)
+        } else {
+            pixelW = size.width
+            pixelH = size.height
+        }
+        let longest = max(pixelW, pixelH)
+        guard longest > maxEdge, longest > 0 else { return self }
+        let scale = maxEdge / longest
+        return resized(to: CGSize(width: pixelW * scale, height: pixelH * scale))
     }
 }

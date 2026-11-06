@@ -40,9 +40,12 @@ final class ClipboardManager: ObservableObject {
 
     // MARK: - Monitoring
     private func startMonitoring() {
-        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             self?.checkClipboard()
         }
+        // .common so monitoring keeps running while the user scrolls / tracks in UI
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
     }
     
     private func checkClipboard() {
@@ -65,26 +68,66 @@ final class ClipboardManager: ObservableObject {
         }
     }
     
+    /// True when the pasteboard carries a *real* bitmap image (not an HTML/PDF preview
+    /// that `NSImage(pasteboard:)` would happily render as an image).
+    private func pasteboardHasBitmapImage(_ pb: NSPasteboard) -> Bool {
+        let imageTypes: [NSPasteboard.PasteboardType] = [
+            .tiff, .png,
+            NSPasteboard.PasteboardType("public.jpeg"),
+            NSPasteboard.PasteboardType("public.heic"),
+            NSPasteboard.PasteboardType("com.compuserve.gif"),
+        ]
+        guard let types = pb.types else { return false }
+        return types.contains(where: { imageTypes.contains($0) })
+    }
+    
     private func captureClipboardItem() {
         let pb = NSPasteboard.general
         
-        // Try to capture image first (higher priority)
-        if let image = NSImage(pasteboard: pb) {
-            addImageItem(image)
-        }
-        // Then try text (standard)
-        else if let text = pb.string(forType: .string), !text.isEmpty {
-            addTextItem(text)
-        }
-        // Fallback: Try to read RTF or HTML and convert to string
-        else if let rtfData = pb.data(forType: .rtf) {
-            if let attributedString = NSAttributedString(rtf: rtfData, documentAttributes: nil) {
-                addTextItem(attributedString.string)
+        // Prefer real bitmap images. Use original PNG/TIFF bytes when available so
+        // we don't re-encode and lose quality.
+        if pasteboardHasBitmapImage(pb) {
+            if let png = pb.data(forType: .png), !png.isEmpty {
+                addImageData(png, fallbackImage: NSImage(data: png))
+                return
+            }
+            if let tiff = pb.data(forType: .tiff), !tiff.isEmpty {
+                // Re-wrap TIFF as PNG for compact lossless storage.
+                if let image = NSImage(data: tiff), let png = image.pngData() {
+                    addImageData(png, fallbackImage: image)
+                    return
+                }
+            }
+            let jpegType = NSPasteboard.PasteboardType("public.jpeg")
+            if let jpeg = pb.data(forType: jpegType), !jpeg.isEmpty {
+                addImageData(jpeg, fallbackImage: NSImage(data: jpeg))
+                return
+            }
+            if let image = NSImage(pasteboard: pb) {
+                addImageItem(image)
+                return
             }
         }
-        else if let htmlData = pb.data(forType: .html) {
-             if let attributedString = NSAttributedString(html: htmlData, options: [:], documentAttributes: nil) {
-                addTextItem(attributedString.string)
+        
+        if let text = pb.string(forType: .string), !text.isEmpty {
+            addTextItem(text)
+            return
+        }
+        
+        if let rtfData = pb.data(forType: .rtf),
+           let attributedString = NSAttributedString(rtf: rtfData, documentAttributes: nil) {
+            let text = attributedString.string
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                addTextItem(text)
+                return
+            }
+        }
+        
+        if let htmlData = pb.data(forType: .html),
+           let attributedString = NSAttributedString(html: htmlData, options: [:], documentAttributes: nil) {
+            let text = attributedString.string
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                addTextItem(text)
             }
         }
     }
@@ -107,33 +150,46 @@ final class ClipboardManager: ObservableObject {
         }
     }
     
+    /// Soft ceiling so a 40MP photo doesn't blow up UserDefaults. Screenshots
+    /// and normal copies stay untouched below this.
+    private static let maxImageEdge: CGFloat = 4096
+
     private func addImageItem(_ image: NSImage) {
-        // Create thumbnail (max 200x200)
-        let thumbnail = image.resized(to: CGSize(width: 200, height: 200))
-        
-        guard let data = thumbnail.jpegData(compressionQuality: 0.7) else {
-            return
-        }
-        
-        // Check for duplicate (compare first 1KB of data)
+        guard let data = Self.encodeImagePreservingQuality(image) else { return }
+        addImageData(data, fallbackImage: image)
+    }
+
+    /// Stores already-encoded image bytes (PNG/JPEG) when we got them straight
+    /// from the pasteboard — zero re-compression.
+    private func addImageData(_ data: Data, fallbackImage: NSImage?) {
+        // Duplicate check against raw bytes (cheap + accurate).
         if let first = items.first,
-           first.isImage,
-           let firstData = first.nsImage()?.jpegData(),
-           firstData.prefix(1024) == data.prefix(1024) {
+           case .image(let existing) = first.content,
+           existing.prefix(2048) == data.prefix(2048),
+           existing.count == data.count {
             return
         }
-        
+
         let item = ClipboardItem(content: .image(data))
-        
+
         DispatchQueue.main.async {
             self.items.insert(item, at: 0)
             self.trimItems()
             self.saveItems()
         }
-        
-        // Kick off OCR in the background. Uses the FULL image (not the thumbnail)
-        // so we don't lose detail for text recognition.
-        runOCR(on: image, itemID: item.id)
+
+        // OCR on the highest-res image we have.
+        let ocrSource = fallbackImage ?? NSImage(data: data)
+        if let ocrSource {
+            runOCR(on: ocrSource, itemID: item.id)
+        }
+    }
+
+    /// Encode for history: PNG (lossless) preferred; only downscale above 4k edge.
+    private static func encodeImagePreservingQuality(_ image: NSImage) -> Data? {
+        let capped = image.capped(toMaxEdge: maxImageEdge)
+        if let png = capped.pngData() { return png }
+        return capped.jpegData(compressionQuality: 0.92)
     }
     
     // MARK: - OCR (on-device, free, via Vision)
@@ -163,7 +219,6 @@ final class ClipboardManager: ObservableObject {
             }
             
             // .accurate is slower but much better quality on screenshots/UI text.
-            // Apple Silicon handles a 200x200 thumbnail in ~50-150ms.
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
             
@@ -309,7 +364,7 @@ final class ClipboardManager: ObservableObject {
         }
     }
     
-    // MARK: - Public Methods for File Drops
+    // MARK: - Public Methods for File Drops / AI results
     func addFileImage(_ image: NSImage) {
         addImageItem(image)
     }
@@ -317,11 +372,19 @@ final class ClipboardManager: ObservableObject {
     func addFileText(_ text: String, filename: String? = nil) {
         // Add filename as prefix if provided
         let content = if let filename = filename {
-            " \(filename)\n\n\(text)"
+            "\(filename)\n\n\(text)"
         } else {
             text
         }
         addTextItem(content)
+    }
+    
+    /// Insert an Apple Intelligence result into history without writing the
+    /// system pasteboard (so we don't overwrite whatever the user has copied).
+    func addAIResult(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        addTextItem(trimmed)
     }
     
     deinit {

@@ -28,8 +28,9 @@ class TrayManager: ObservableObject {
     
     // MARK: - Add Items
     func addImage(_ image: NSImage, filename: String = "Image") {
-        let thumbnail = image.resized(to: CGSize(width: 200, height: 200))
-        guard let data = thumbnail.jpegData(compressionQuality: 0.7) else { return }
+        // Keep full quality (cap only absurdly large images). Prefer lossless PNG.
+        let capped = image.capped(toMaxEdge: 4096)
+        guard let data = capped.pngData() ?? capped.jpegData(compressionQuality: 0.92) else { return }
         
         let item = TrayItem(name: filename, type: .image, data: data)
         saveAndPublish(item)

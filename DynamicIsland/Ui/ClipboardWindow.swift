@@ -12,11 +12,12 @@ class ClipboardWindow: NSPanel {
     private var tabButtons: [Tab: HoverButton] = [:]
     private var tabIndicator: CALayer?
     private var tabSegment: NSView?
-    private var headerHeight: CGFloat = 50
-    private let windowWidth: CGFloat = 380
-    private let windowHeight: CGFloat = 540
-    private let searchFieldHeight: CGFloat = 30
-    private let searchFieldPadding: CGFloat = 8
+    private var headerHeight: CGFloat = 54
+    private let windowWidth: CGFloat = 400
+    private let windowHeight: CGFloat = 560
+    private let searchFieldHeight: CGFloat = 32
+    private let searchFieldPadding: CGFloat = 10
+    private var glassRoot: NSVisualEffectView?
     
     // Pinning State
     private var isPinned: Bool = false
@@ -38,10 +39,17 @@ class ClipboardWindow: NSPanel {
     private var aiTask: Task<Void, Never>?
     private var aiInputText: String = ""
     private var aiCurrentAction: AIAction = .summarize
+    private var aiCustomPrompt: String = ""
     private var aiResultText: String = ""
     private var aiPasteButton: NSButton?
     private var aiCopyButton: NSButton?
     private var aiRegenButton: NSButton?
+    private var aiSaveButton: NSButton?
+    private var aiTitleLabel: NSTextField?
+    private var aiPromptField: NSTextField?
+    private var aiActionButtons: [AIAction: NSButton] = [:]
+    /// Invalidates in-flight UI updates when the user switches actions quickly.
+    private var aiRunToken = UUID()
     
     enum Tab: Int {
         case clipboard = 0
@@ -51,7 +59,7 @@ class ClipboardWindow: NSPanel {
 
     init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 540),
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 560),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -61,7 +69,29 @@ class ClipboardWindow: NSPanel {
         setupContent()
         setupClickMonitor()
         setupOCRObserver()
+        setupAppearanceObserver()
         registerForDraggedTypes([.fileURL])
+    }
+
+    private func setupAppearanceObserver() {
+        // Re-apply glass chrome when the user flips System Settings appearance.
+        DistributedNotificationCenter.default.addObserver(
+            forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshGlassChrome()
+        }
+    }
+
+    private func refreshGlassChrome() {
+        guard let root = glassRoot else { return }
+        LiquidGlass.applyChrome(to: root, bounds: root.bounds)
+        // Rebuild visible content so adaptive colors refresh.
+        if let contentView = self.contentView {
+            // Keep header; rebuild body
+            updateContent(in: contentView)
+        }
     }
     
     private func setupOCRObserver() {
@@ -84,58 +114,22 @@ class ClipboardWindow: NSPanel {
         self.isFloatingPanel = true
         self.becomesKeyOnlyIfNeeded = false
         self.hasShadow = true
-        self.styleMask.insert(.fullSizeContentView) 
+        self.styleMask.insert(.fullSizeContentView)
         self.titlebarAppearsTransparent = true
         self.titleVisibility = .hidden
         self.isMovableByWindowBackground = true
-        self.appearance = NSAppearance(named: .vibrantDark)
+        // Follow System Settings — do NOT force dark.
+        self.appearance = nil
     }
     
-    // MARK: - Content (crystal/liquid-glass background)
+    // MARK: - Content (liquid-glass background)
     
     private func setupContent() {
         let bounds = NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight)
-        let cornerRadius: CGFloat = 18
         
-        // Liquid-glass background
         let visualEffectView = NSVisualEffectView(frame: bounds)
-        visualEffectView.material = .popover
-        visualEffectView.blendingMode = .behindWindow
-        visualEffectView.state = .active
-        visualEffectView.wantsLayer = true
-        visualEffectView.layer?.cornerRadius = cornerRadius
-        visualEffectView.layer?.cornerCurve = .continuous
-        visualEffectView.layer?.masksToBounds = true
-        
-        // Subtle dark tint so white text reads well over any wallpaper
-        let tintLayer = CALayer()
-        tintLayer.frame = bounds
-        tintLayer.backgroundColor = NSColor.black.withAlphaComponent(0.15).cgColor
-        visualEffectView.layer?.addSublayer(tintLayer)
-        
-        // Top inner highlight – the glass sheen
-        let sheen = CAGradientLayer()
-        sheen.frame = NSRect(x: 0, y: bounds.height - 120, width: bounds.width, height: 120)
-        sheen.colors = [
-            NSColor.white.withAlphaComponent(0.16).cgColor,
-            NSColor.white.withAlphaComponent(0.04).cgColor,
-            NSColor.white.withAlphaComponent(0.0).cgColor
-        ]
-        sheen.locations = [0.0, 0.5, 1.0]
-        sheen.startPoint = CGPoint(x: 0.5, y: 1.0)
-        sheen.endPoint = CGPoint(x: 0.5, y: 0.0)
-        visualEffectView.layer?.addSublayer(sheen)
-        
-        // Hairline outer stroke
-        let strokeLayer = CALayer()
-        strokeLayer.frame = bounds
-        strokeLayer.cornerRadius = cornerRadius
-        strokeLayer.cornerCurve = .continuous
-        strokeLayer.borderWidth = 1
-        strokeLayer.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
-        strokeLayer.masksToBounds = true
-        visualEffectView.layer?.addSublayer(strokeLayer)
-        
+        LiquidGlass.applyChrome(to: visualEffectView, bounds: bounds)
+        glassRoot = visualEffectView
         self.contentView = visualEffectView
         
         createHeader(in: visualEffectView)
@@ -148,42 +142,41 @@ class ClipboardWindow: NSPanel {
         let headerY = windowHeight - headerHeight
         let header = NSView(frame: NSRect(x: 0, y: headerY, width: windowWidth, height: headerHeight))
         header.wantsLayer = true
+        header.identifier = NSUserInterfaceItemIdentifier("clippy.header")
         container.addSubview(header)
         
         // Hairline divider under the header
         let divider = CALayer()
-        divider.frame = CGRect(x: 14, y: 0, width: windowWidth - 28, height: 0.5)
-        divider.backgroundColor = NSColor.white.withAlphaComponent(0.07).cgColor
+        divider.frame = CGRect(x: 16, y: 0, width: windowWidth - 32, height: LiquidGlass.hairline)
+        divider.backgroundColor = LiquidGlass.separator.cgColor
         header.layer?.addSublayer(divider)
         
-        // Logo (rounded square)
-        let logo = NSImageView(frame: NSRect(x: 14, y: (headerHeight - 22) / 2, width: 22, height: 22))
+        // Logo (rounded glass tile)
+        let logo = NSImageView(frame: NSRect(x: 16, y: (headerHeight - 26) / 2, width: 26, height: 26))
         logo.image = NSImage(named: "AppIcon") ?? NSImage(systemSymbolName: "doc.on.clipboard.fill", accessibilityDescription: "Logo")
         logo.imageScaling = .scaleProportionallyUpOrDown
         logo.wantsLayer = true
-        logo.layer?.cornerRadius = 5
+        logo.layer?.cornerRadius = 7
+        logo.layer?.cornerCurve = .continuous
         logo.layer?.masksToBounds = true
+        logo.layer?.borderWidth = LiquidGlass.hairline
+        logo.layer?.borderColor = LiquidGlass.wellStroke.cgColor
         header.addSubview(logo)
         
         // Title
         let title = NSTextField(labelWithString: "Clippy")
-        title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        title.textColor = NSColor.white.withAlphaComponent(0.92)
-        title.frame = NSRect(x: 42, y: (headerHeight - 16) / 2, width: 100, height: 16)
+        title.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        title.textColor = LiquidGlass.primaryText
+        title.frame = NSRect(x: 50, y: (headerHeight - 18) / 2, width: 100, height: 18)
         header.addSubview(title)
         
-        // Segmented tab control – centered-right
-        let segmentWidth: CGFloat = 108
-        let segmentHeight: CGFloat = 28
-        let segmentX: CGFloat = windowWidth - 14 - 64 - 8 - segmentWidth
+        // Segmented tab control – glass well
+        let segmentWidth: CGFloat = 114
+        let segmentHeight: CGFloat = 30
+        let segmentX: CGFloat = windowWidth - 16 - 68 - 8 - segmentWidth
         let segmentY: CGFloat = (headerHeight - segmentHeight) / 2
         let segment = NSView(frame: NSRect(x: segmentX, y: segmentY, width: segmentWidth, height: segmentHeight))
-        segment.wantsLayer = true
-        segment.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.18).cgColor
-        segment.layer?.cornerRadius = 8
-        segment.layer?.cornerCurve = .continuous
-        segment.layer?.borderWidth = 0.5
-        segment.layer?.borderColor = NSColor.white.withAlphaComponent(0.06).cgColor
+        LiquidGlass.styleWell(segment, corner: LiquidGlass.controlCorner)
         header.addSubview(segment)
         tabSegment = segment
         
@@ -197,12 +190,16 @@ class ClipboardWindow: NSPanel {
             width: tabW,
             height: segmentHeight - inset * 2
         )
-        indicator.backgroundColor = NSColor.white.withAlphaComponent(0.18).cgColor
-        indicator.cornerRadius = 6
+        indicator.backgroundColor = LiquidGlass.pillFill.cgColor
+        indicator.cornerRadius = 7
         indicator.cornerCurve = .continuous
-        // soft white border for the pill
-        indicator.borderColor = NSColor.white.withAlphaComponent(0.10).cgColor
-        indicator.borderWidth = 0.5
+        indicator.borderColor = LiquidGlass.pillStroke.cgColor
+        indicator.borderWidth = LiquidGlass.hairline
+        // Soft shadow for the floating pill
+        indicator.shadowColor = NSColor.black.withAlphaComponent(0.18).cgColor
+        indicator.shadowOpacity = 1
+        indicator.shadowRadius = 3
+        indicator.shadowOffset = CGSize(width: 0, height: -0.5)
         segment.layer?.addSublayer(indicator)
         tabIndicator = indicator
         
@@ -212,12 +209,13 @@ class ClipboardWindow: NSPanel {
         addTabButton(symbolName: "face.smiling", tab: .emoji, in: segment, x: inset + tabW * 2, width: tabW, height: segmentHeight - inset * 2)
         
         // Pin button
-        let pinBtn = HoverIconButton(frame: NSRect(x: windowWidth - 14 - 64, y: (headerHeight - 26) / 2, width: 26, height: 26))
+        let pinBtn = HoverIconButton(frame: NSRect(x: windowWidth - 16 - 68, y: (headerHeight - 28) / 2, width: 28, height: 28))
         pinBtn.symbolName = "pin"
         pinBtn.symbolPointSize = 12
         pinBtn.symbolWeight = .semibold
-        pinBtn.normalTint = NSColor.white.withAlphaComponent(0.55)
-        pinBtn.hoverTint = NSColor.white.withAlphaComponent(0.95)
+        pinBtn.normalTint = LiquidGlass.iconMuted
+        pinBtn.hoverTint = LiquidGlass.iconPrimary
+        pinBtn.hoverBackground = LiquidGlass.rowHover
         pinBtn.toolTip = "Pin window"
         pinBtn.target = self
         pinBtn.action = #selector(toggleWindowPin)
@@ -226,13 +224,13 @@ class ClipboardWindow: NSPanel {
         self.pinButton = pinBtn
         
         // Trash button
-        let clearBtn = HoverIconButton(frame: NSRect(x: windowWidth - 14 - 26, y: (headerHeight - 26) / 2, width: 26, height: 26))
+        let clearBtn = HoverIconButton(frame: NSRect(x: windowWidth - 16 - 28, y: (headerHeight - 28) / 2, width: 28, height: 28))
         clearBtn.symbolName = "trash"
         clearBtn.symbolPointSize = 12
         clearBtn.symbolWeight = .semibold
-        clearBtn.normalTint = NSColor.white.withAlphaComponent(0.55)
+        clearBtn.normalTint = LiquidGlass.iconMuted
         clearBtn.hoverTint = NSColor.systemRed
-        clearBtn.hoverBackground = NSColor.systemRed.withAlphaComponent(0.16)
+        clearBtn.hoverBackground = NSColor.systemRed.withAlphaComponent(0.14)
         clearBtn.toolTip = "Clear all"
         clearBtn.target = self
         clearBtn.action = #selector(clearAllClicked)
@@ -280,8 +278,8 @@ class ClipboardWindow: NSPanel {
     @objc private func toggleWindowPin() {
         isPinned.toggle()
         pinButton?.symbolName = isPinned ? "pin.fill" : "pin"
-        pinButton?.normalTint = isPinned ? NSColor.systemYellow : NSColor.white.withAlphaComponent(0.55)
-        pinButton?.hoverTint = isPinned ? NSColor.systemYellow : NSColor.white.withAlphaComponent(0.95)
+        pinButton?.normalTint = isPinned ? NSColor.systemYellow : LiquidGlass.iconMuted
+        pinButton?.hoverTint = isPinned ? NSColor.systemYellow : LiquidGlass.iconPrimary
         pinButton?.applySymbol()
         pinButton?.refreshAppearance()
     }
@@ -299,6 +297,9 @@ class ClipboardWindow: NSPanel {
             aiCopyButton = nil
             aiPasteButton = nil
             aiRegenButton = nil
+            aiSaveButton = nil
+            aiTitleLabel = nil
+            aiActionButtons.removeAll()
         }
         
         // Animate the pill indicator
@@ -388,18 +389,18 @@ class ClipboardWindow: NSPanel {
         }
     }
     
-    /// Builds a styled NSSearchField that fits the crystal/dark UI.
+    /// Builds a styled NSSearchField that fits the liquid-glass UI.
     private func makeSearchField() -> NSSearchField {
         let field = NSSearchField()
         field.placeholderString = "Search clipboard…"
         field.font = NSFont.systemFont(ofSize: 13)
-        field.textColor = .white
+        field.textColor = LiquidGlass.primaryText
         field.delegate = self
         field.bezelStyle = .roundedBezel
         field.focusRingType = .none
         field.wantsLayer = true
         field.drawsBackground = false
-        // Subtle dark glass background for the field itself
+        LiquidGlass.styleWell(field, corner: LiquidGlass.chipCorner)
         if let cell = field.cell as? NSSearchFieldCell {
             cell.searchButtonCell?.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)?
                 .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
@@ -409,7 +410,7 @@ class ClipboardWindow: NSPanel {
             cell.placeholderAttributedString = NSAttributedString(
                 string: "Search clipboard…",
                 attributes: [
-                    .foregroundColor: NSColor.white.withAlphaComponent(0.4),
+                    .foregroundColor: LiquidGlass.tertiaryText,
                     .font: NSFont.systemFont(ofSize: 13)
                 ]
             )
@@ -424,11 +425,18 @@ class ClipboardWindow: NSPanel {
     private func filteredClipboardItems() -> [ClipboardItem] {
         let allItems = ClipboardManager.shared.items
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return allItems }
-        
-        return allItems.filter { item in
-            let haystack = item.searchableText.lowercased()
-            return haystack.contains(query)
+        let filtered: [ClipboardItem]
+        if query.isEmpty {
+            filtered = allItems
+        } else {
+            filtered = allItems.filter { item in
+                item.searchableText.lowercased().contains(query)
+            }
+        }
+        // Pinned first, then preserve relative order within each group.
+        return filtered.sorted { a, b in
+            if a.isPinned != b.isPinned { return a.isPinned && !b.isPinned }
+            return false
         }
     }
     
@@ -463,8 +471,8 @@ class ClipboardWindow: NSPanel {
             return
         }
         
-        var y: CGFloat = 6
-        let rowHeight: CGFloat = 40
+        var y: CGFloat = 8
+        let rowHeight: CGFloat = 44
         
         for (index, item) in items.enumerated() {
             let row = createClipboardItemView(item: item, index: index, yPosition: y)
@@ -473,7 +481,7 @@ class ClipboardWindow: NSPanel {
             if let clickable = row as? NSClickableView {
                 clipboardRowViews.append(clickable)
             }
-            y += rowHeight + 2
+            y += rowHeight + 4
         }
         
         listView.frame.size.height = y + 8
@@ -556,15 +564,15 @@ class ClipboardWindow: NSPanel {
             let listView = FlippedView(frame: NSRect(x: 0, y: 0, width: windowWidth, height: contentRegionHeight))
             dropZone.addSubview(listView)
             
-            var y: CGFloat = 6
-            let rowHeight: CGFloat = 40
+            var y: CGFloat = 8
+            let rowHeight: CGFloat = 44
             
             for (index, item) in items.prefix(12).enumerated() {
                 let row = createTrayItemView(item: item, index: index, yPosition: y)
                 row.frame.size.height = rowHeight
                 row.frame.origin = NSPoint(x: 0, y: y)
                 listView.addSubview(row)
-                y += rowHeight + 2
+                y += rowHeight + 4
             }
         }
         
@@ -588,7 +596,7 @@ class ClipboardWindow: NSPanel {
         for category in categories {
             let header = NSTextField(labelWithString: category.name.uppercased())
             header.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
-            header.textColor = NSColor.white.withAlphaComponent(0.45)
+            header.textColor = LiquidGlass.tertiaryText
             header.frame = NSRect(x: 16, y: currentY, width: windowWidth - 32, height: 14)
             listView.addSubview(header)
             
@@ -796,11 +804,11 @@ extension ClipboardWindow: NSSearchFieldDelegate {
 extension ClipboardWindow {
     
     func createClipboardItemView(item: ClipboardItem, index: Int, yPosition: CGFloat) -> NSView {
-        let rowWidth: CGFloat = windowWidth - 16
-        let rowHeight: CGFloat = 40
-        let row = NSClickableView(frame: NSRect(x: 8, y: yPosition, width: rowWidth, height: rowHeight))
+        let rowWidth: CGFloat = windowWidth - 20
+        let rowHeight: CGFloat = 44
+        let row = NSClickableView(frame: NSRect(x: 10, y: yPosition, width: rowWidth, height: rowHeight))
         row.wantsLayer = true
-        row.layer?.cornerRadius = 8
+        row.layer?.cornerRadius = LiquidGlass.rowCorner
         row.layer?.cornerCurve = .continuous
         
         row.onClick = { [weak self] in
@@ -813,34 +821,32 @@ extension ClipboardWindow {
         let iconY: CGFloat = (rowHeight - iconSize) / 2
         
         if item.isImage, let image = item.nsImage() {
-            // Live thumbnail clipped into a small rounded rect
-            let thumb = NSImageView(frame: NSRect(x: iconX - 2, y: (rowHeight - 22) / 2, width: 22, height: 22))
+            let thumb = NSImageView(frame: NSRect(x: iconX - 2, y: (rowHeight - 24) / 2, width: 24, height: 24))
             thumb.image = image
             thumb.imageScaling = .scaleProportionallyUpOrDown
             thumb.wantsLayer = true
-            thumb.layer?.cornerRadius = 4
+            thumb.layer?.cornerRadius = 6
             thumb.layer?.cornerCurve = .continuous
             thumb.layer?.masksToBounds = true
-            thumb.layer?.borderWidth = 0.5
-            thumb.layer?.borderColor = NSColor.white.withAlphaComponent(0.16).cgColor
+            thumb.layer?.borderWidth = LiquidGlass.hairline
+            thumb.layer?.borderColor = LiquidGlass.thumbBorder.cgColor
             row.addSubview(thumb)
         } else {
             let symbol = NSImageView(frame: NSRect(x: iconX, y: iconY, width: iconSize, height: iconSize))
-            let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+            let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
             symbol.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
-            symbol.contentTintColor = NSColor.white.withAlphaComponent(0.55)
+            symbol.contentTintColor = LiquidGlass.iconMuted
             symbol.imageAlignment = .alignCenter
             row.addSubview(symbol)
         }
         
-        // Title – when an image has OCR text, show the recognized text as the preview
-        let titleX: CGFloat = iconX + iconSize + 10
-        var trailingReservation: CGFloat = 60 // index/pin + menu
+        let titleX: CGFloat = iconX + iconSize + 12
+        var trailingReservation: CGFloat = 62
         let displayTitle: String
         if item.isImage {
             if item.hasOCRText, let ocr = item.ocrText {
                 displayTitle = ocr.replacingOccurrences(of: "\n", with: " ")
-                trailingReservation += 18 // make room for the OCR indicator
+                trailingReservation += 18
             } else {
                 displayTitle = "Image"
             }
@@ -849,13 +855,12 @@ extension ClipboardWindow {
         }
         let titleW: CGFloat = rowWidth - titleX - trailingReservation
         let titleLabel = NSTextField(labelWithString: displayTitle)
-        titleLabel.font = NSFont.systemFont(ofSize: 12.5, weight: .regular)
-        titleLabel.textColor = NSColor.white.withAlphaComponent(0.92)
+        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .regular)
+        titleLabel.textColor = LiquidGlass.primaryText
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.frame = NSRect(x: titleX, y: (rowHeight - 18) / 2, width: titleW, height: 18)
         row.addSubview(titleLabel)
         
-        // OCR-available indicator (small text-recognition glyph)
         if item.isImage && item.hasOCRText {
             let badge = NSImageView(frame: NSRect(x: titleX + titleW + 4, y: (rowHeight - 12) / 2, width: 14, height: 14))
             let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
@@ -867,7 +872,6 @@ extension ClipboardWindow {
             row.addSubview(badge)
         }
         
-        // Pin indicator OR index chip
         if item.isPinned {
             let pin = NSImageView(frame: NSRect(x: rowWidth - 56, y: (rowHeight - 12) / 2, width: 12, height: 12))
             let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
@@ -878,19 +882,19 @@ extension ClipboardWindow {
         } else if index < 9 {
             let chip = NSTextField(labelWithString: "\(index + 1)")
             chip.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
-            chip.textColor = NSColor.white.withAlphaComponent(0.45)
+            chip.textColor = LiquidGlass.tertiaryText
             chip.alignment = .center
             chip.frame = NSRect(x: rowWidth - 56, y: (rowHeight - 14) / 2, width: 16, height: 14)
             row.addSubview(chip)
         }
         
-        // 3-dot menu
-        let menuButton = HoverIconButton(frame: NSRect(x: rowWidth - 32, y: (rowHeight - 24) / 2, width: 24, height: 24))
+        let menuButton = HoverIconButton(frame: NSRect(x: rowWidth - 34, y: (rowHeight - 26) / 2, width: 26, height: 26))
         menuButton.symbolName = "ellipsis"
         menuButton.symbolPointSize = 12
         menuButton.symbolWeight = .semibold
-        menuButton.normalTint = NSColor.white.withAlphaComponent(0.45)
-        menuButton.hoverTint = NSColor.white.withAlphaComponent(0.95)
+        menuButton.normalTint = LiquidGlass.iconMuted
+        menuButton.hoverTint = LiquidGlass.iconPrimary
+        menuButton.hoverBackground = LiquidGlass.rowHover
         menuButton.applySymbol()
         menuButton.target = self
         menuButton.action = #selector(showItemMenu(_:))
@@ -901,11 +905,11 @@ extension ClipboardWindow {
     }
     
     func createTrayItemView(item: TrayItem, index: Int, yPosition: CGFloat) -> NSView {
-        let rowWidth: CGFloat = windowWidth - 16
-        let rowHeight: CGFloat = 40
-        let row = DraggableTrayItemView(frame: NSRect(x: 8, y: yPosition, width: rowWidth, height: rowHeight))
+        let rowWidth: CGFloat = windowWidth - 20
+        let rowHeight: CGFloat = 44
+        let row = DraggableTrayItemView(frame: NSRect(x: 10, y: yPosition, width: rowWidth, height: rowHeight))
         row.wantsLayer = true
-        row.layer?.cornerRadius = 8
+        row.layer?.cornerRadius = LiquidGlass.rowCorner
         row.layer?.cornerCurve = .continuous
         row.trayItem = item
         
@@ -913,7 +917,6 @@ extension ClipboardWindow {
             self?.copyTrayItem(item)
         }
         
-        // Leading icon
         let iconX: CGFloat = 12
         let iconSize: CGFloat = 22
         let iconY: CGFloat = (rowHeight - iconSize) / 2
@@ -923,11 +926,11 @@ extension ClipboardWindow {
             thumb.image = image
             thumb.imageScaling = .scaleProportionallyUpOrDown
             thumb.wantsLayer = true
-            thumb.layer?.cornerRadius = 4
+            thumb.layer?.cornerRadius = 6
             thumb.layer?.cornerCurve = .continuous
             thumb.layer?.masksToBounds = true
-            thumb.layer?.borderWidth = 0.5
-            thumb.layer?.borderColor = NSColor.white.withAlphaComponent(0.16).cgColor
+            thumb.layer?.borderWidth = LiquidGlass.hairline
+            thumb.layer?.borderColor = LiquidGlass.thumbBorder.cgColor
             row.addSubview(thumb)
         } else if item.type == .file {
             let icon = NSImageView(frame: NSRect(x: iconX, y: iconY, width: iconSize, height: iconSize))
@@ -937,29 +940,27 @@ extension ClipboardWindow {
             } else {
                 let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
                 icon.image = NSImage(systemSymbolName: "doc.fill", accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
-                icon.contentTintColor = NSColor.white.withAlphaComponent(0.7)
+                icon.contentTintColor = LiquidGlass.iconMuted
             }
             row.addSubview(icon)
         } else {
             let symbol = NSImageView(frame: NSRect(x: iconX + 2, y: (rowHeight - 18) / 2, width: 18, height: 18))
-            let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+            let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
             symbol.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
-            symbol.contentTintColor = NSColor.white.withAlphaComponent(0.55)
+            symbol.contentTintColor = LiquidGlass.iconMuted
             symbol.imageAlignment = .alignCenter
             row.addSubview(symbol)
         }
         
-        // Title
-        let titleX: CGFloat = iconX + iconSize + 10
+        let titleX: CGFloat = iconX + iconSize + 12
         let titleW: CGFloat = rowWidth - titleX - 60
         let title = NSTextField(labelWithString: item.name)
-        title.font = NSFont.systemFont(ofSize: 12.5, weight: .regular)
-        title.textColor = NSColor.white.withAlphaComponent(0.92)
+        title.font = NSFont.systemFont(ofSize: 13, weight: .regular)
+        title.textColor = LiquidGlass.primaryText
         title.lineBreakMode = .byTruncatingTail
         title.frame = NSRect(x: titleX, y: (rowHeight - 18) / 2, width: titleW, height: 18)
         row.addSubview(title)
         
-        // Pin indicator
         if item.isPinned {
             let pin = NSImageView(frame: NSRect(x: rowWidth - 56, y: (rowHeight - 12) / 2, width: 12, height: 12))
             let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
@@ -969,17 +970,17 @@ extension ClipboardWindow {
             row.addSubview(pin)
         }
         
-        // 3-dot menu
-        let menuButton = HoverIconButton(frame: NSRect(x: rowWidth - 32, y: (rowHeight - 24) / 2, width: 24, height: 24))
+        let menuButton = HoverIconButton(frame: NSRect(x: rowWidth - 34, y: (rowHeight - 26) / 2, width: 26, height: 26))
         menuButton.symbolName = "ellipsis"
         menuButton.symbolPointSize = 12
         menuButton.symbolWeight = .semibold
-        menuButton.normalTint = NSColor.white.withAlphaComponent(0.45)
-        menuButton.hoverTint = NSColor.white.withAlphaComponent(0.95)
+        menuButton.normalTint = LiquidGlass.iconMuted
+        menuButton.hoverTint = LiquidGlass.iconPrimary
+        menuButton.hoverBackground = LiquidGlass.rowHover
         menuButton.applySymbol()
         menuButton.target = self
         menuButton.action = #selector(showTrayItemMenu(_:))
-        menuButton.tag = index 
+        menuButton.tag = index
         row.addSubview(menuButton)
         
         return row
@@ -1130,21 +1131,53 @@ extension ClipboardWindow {
 
     private func buildAISubmenu(for text: String) -> NSMenu {
         let submenu = NSMenu()
-        for action in AIAction.allCases {
+        for action in AIAction.allCases where action != .custom {
             let item = NSMenuItem(title: action.title, action: #selector(menuRunAI(_:)), keyEquivalent: "")
             item.target = self
             item.image = NSImage(systemSymbolName: action.symbolName, accessibilityDescription: action.title)
             item.representedObject = AIInvocation(text: text, action: action)
             submenu.addItem(item)
         }
+        submenu.addItem(NSMenuItem.separator())
+        let custom = NSMenuItem(title: "Custom Prompt…", action: #selector(menuRunCustomAI(_:)), keyEquivalent: "")
+        custom.target = self
+        custom.image = NSImage(systemSymbolName: AIAction.custom.symbolName, accessibilityDescription: "Custom Prompt")
+        custom.representedObject = text
+        submenu.addItem(custom)
         return submenu
     }
 
     @objc fileprivate func menuRunAI(_ sender: NSMenuItem) {
         guard let invocation = sender.representedObject as? AIInvocation else { return }
-        // Show the result inline inside the clipboard window. The user can
-        // hit "Open Full" if they want the standalone demo window instead.
-        showAIInline(text: invocation.text, action: invocation.action)
+        showAIInline(text: invocation.text, action: invocation.action, customPrompt: invocation.customPrompt)
+    }
+
+    @objc fileprivate func menuRunCustomAI(_ sender: NSMenuItem) {
+        guard let text = sender.representedObject as? String else { return }
+        guard let prompt = askForCustomPrompt(defaultText: aiCustomPrompt) else { return }
+        showAIInline(text: text, action: .custom, customPrompt: prompt)
+    }
+
+    /// Simple modal asking the user for a freeform AI instruction.
+    private func askForCustomPrompt(defaultText: String = "") -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Custom Prompt"
+        alert.informativeText = "Tell Apple Intelligence what to do with this clipboard text."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Run")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.placeholderString = "e.g. Turn this into a short tweet"
+        field.stringValue = defaultText
+        field.isEditable = true
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return nil }
+        let trimmed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     // MARK: - Inline AI Panel
@@ -1152,7 +1185,7 @@ extension ClipboardWindow {
     /// Builds and displays an overlay panel inside the clipboard window that
     /// streams the result of an Apple Intelligence action. The clipboard list
     /// underneath is preserved so closing the panel returns the user there.
-    private func showAIInline(text: String, action: AIAction) {
+    private func showAIInline(text: String, action: AIAction, customPrompt: String? = nil) {
         guard let container = self.contentView else { return }
 
         // Cancel anything currently in flight so we never have two streams.
@@ -1161,6 +1194,7 @@ extension ClipboardWindow {
 
         aiInputText = text
         aiCurrentAction = action
+        aiCustomPrompt = customPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         aiResultText = ""
 
         // Overlay covers the content area between the header and footer.
@@ -1218,11 +1252,12 @@ extension ClipboardWindow {
         sparklesIV.contentTintColor = NSColor.controlAccentColor
         topBar.addSubview(sparklesIV)
 
-        let titleLbl = NSTextField(labelWithString: action.title)
+        let titleLbl = NSTextField(labelWithString: action == .custom ? "Custom Prompt" : action.title)
         titleLbl.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         titleLbl.textColor = .white
         titleLbl.frame = NSRect(x: 56, y: (topBarH - 16) / 2, width: 220, height: 16)
         topBar.addSubview(titleLbl)
+        aiTitleLabel = titleLbl
 
         let spinner = NSProgressIndicator()
         spinner.style = .spinning
@@ -1232,7 +1267,56 @@ extension ClipboardWindow {
         topBar.addSubview(spinner)
         aiSpinner = spinner
 
-        // Bottom action bar: Copy / Paste / Open Full
+        // Action chip strip — switch actions without leaving the panel
+        let chipBarH: CGFloat = 34
+        let chipBarY = overlayH - topBarH - chipBarH
+        let chipScroll = NSScrollView(frame: NSRect(x: 0, y: chipBarY, width: windowWidth, height: chipBarH))
+        chipScroll.drawsBackground = false
+        chipScroll.hasHorizontalScroller = false
+        chipScroll.hasVerticalScroller = false
+        chipScroll.horizontalScrollElasticity = .allowed
+        chipScroll.scrollerStyle = .overlay
+        let chipDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: windowWidth, height: chipBarH))
+        chipScroll.documentView = chipDoc
+        overlay.addSubview(chipScroll)
+
+        aiActionButtons.removeAll()
+        var chipX: CGFloat = 10
+        for chipAction in AIAction.allCases {
+            let chip = NSButton(title: chipAction.shortTitle, target: self, action: #selector(aiChipTapped(_:)))
+            chip.bezelStyle = .rounded
+            chip.controlSize = .mini
+            chip.font = NSFont.systemFont(ofSize: 10, weight: .medium)
+            chip.setButtonType(.pushOnPushOff)
+            chip.identifier = NSUserInterfaceItemIdentifier(chipAction.rawValue)
+            chip.state = (chipAction == action) ? .on : .off
+            chip.sizeToFit()
+            let w = max(chip.frame.width + 8, 44)
+            chip.frame = NSRect(x: chipX, y: (chipBarH - 22) / 2, width: w, height: 22)
+            chipDoc.addSubview(chip)
+            aiActionButtons[chipAction] = chip
+            chipX += w + 4
+        }
+        chipDoc.frame.size.width = max(windowWidth, chipX + 6)
+
+        // Custom prompt field (shown for Custom action; hidden otherwise)
+        let promptBarH: CGFloat = 30
+        let promptBarY = chipBarY - promptBarH
+        let promptField = NSTextField(frame: NSRect(x: 12, y: promptBarY + 4, width: windowWidth - 24, height: 22))
+        promptField.placeholderString = "Your prompt — e.g. Turn this into a tweet"
+        promptField.font = NSFont.systemFont(ofSize: 12)
+        promptField.stringValue = aiCustomPrompt
+        promptField.isEditable = true
+        promptField.isBordered = true
+        promptField.bezelStyle = .roundedBezel
+        promptField.focusRingType = .none
+        promptField.target = self
+        promptField.action = #selector(aiCustomPromptSubmitted(_:))
+        promptField.isHidden = (action != .custom)
+        overlay.addSubview(promptField)
+        aiPromptField = promptField
+
+        // Bottom action bar: Save / Copy / Paste / Open Full / Re-run
         let actionBarH: CGFloat = 46
         let actionBar = NSView(frame: NSRect(x: 0, y: 0, width: windowWidth, height: actionBarH))
         overlay.addSubview(actionBar)
@@ -1244,32 +1328,38 @@ extension ClipboardWindow {
 
         let copyBtn = makeAIBarButton(title: "Copy", symbol: "doc.on.doc", action: #selector(aiCopyTapped))
         let pasteBtn = makeAIBarButton(title: "Paste", symbol: "arrow.down.doc", action: #selector(aiPasteTapped), accent: true)
-        let fullBtn = makeAIBarButton(title: "Open Full", symbol: "arrow.up.left.and.arrow.down.right", action: #selector(aiOpenFullTapped))
+        let saveBtn = makeAIBarButton(title: "Save", symbol: "plus.rectangle.on.folder", action: #selector(aiSaveTapped))
+        let fullBtn = makeAIBarButton(title: "Full", symbol: "arrow.up.left.and.arrow.down.right", action: #selector(aiOpenFullTapped))
         let regenBtn = makeAIBarButton(title: "Re-run", symbol: "arrow.clockwise", action: #selector(aiRegenerateTapped))
 
-        let buttonStack = NSStackView(views: [regenBtn, fullBtn, copyBtn, pasteBtn])
+        let buttonStack = NSStackView(views: [regenBtn, fullBtn, saveBtn, copyBtn, pasteBtn])
         buttonStack.orientation = .horizontal
-        buttonStack.spacing = 6
+        buttonStack.spacing = 5
         buttonStack.alignment = .centerY
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
         actionBar.addSubview(buttonStack)
         NSLayoutConstraint.activate([
-            buttonStack.trailingAnchor.constraint(equalTo: actionBar.trailingAnchor, constant: -10),
+            buttonStack.trailingAnchor.constraint(equalTo: actionBar.trailingAnchor, constant: -8),
+            buttonStack.leadingAnchor.constraint(greaterThanOrEqualTo: actionBar.leadingAnchor, constant: 8),
             buttonStack.centerYAnchor.constraint(equalTo: actionBar.centerYAnchor),
         ])
 
         copyBtn.isEnabled = false
         pasteBtn.isEnabled = false
+        saveBtn.isEnabled = false
         regenBtn.isEnabled = false
         aiCopyButton = copyBtn
         aiPasteButton = pasteBtn
+        aiSaveButton = saveBtn
         aiRegenButton = regenBtn
 
-        // Result scroll view fills the middle
+        // Result scroll view fills the middle (leave room for prompt bar when Custom is active)
+        let promptReserve: CGFloat = (action == .custom) ? promptBarH : 0
         let resultY = actionBarH + 4
-        let resultH = overlayH - topBarH - actionBarH - 8
+        let resultH = overlayH - topBarH - chipBarH - promptReserve - actionBarH - 8
         let scroll = NSTextView.scrollableTextView()
         scroll.frame = NSRect(x: 12, y: resultY, width: windowWidth - 24, height: resultH)
+        scroll.identifier = NSUserInterfaceItemIdentifier("aiResultScroll")
         scroll.borderType = .noBorder
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
@@ -1303,7 +1393,7 @@ extension ClipboardWindow {
         overlay.layer?.add(slide, forKey: "slidein")
         overlay.layer?.transform = CATransform3DIdentity
 
-        startAIStream(text: text, action: action)
+        startAIStream(text: text, action: action, customPrompt: customPrompt)
     }
 
     private func makeAIBarButton(title: String, symbol: String, action: Selector, accent: Bool = false) -> NSButton {
@@ -1319,50 +1409,117 @@ extension ClipboardWindow {
         return btn
     }
 
-    private func startAIStream(text: String, action: AIAction) {
+    private func startAIStream(text: String, action: AIAction, customPrompt: String? = nil) {
+        aiTask?.cancel()
+        aiTask = nil
+
+        let runToken = UUID()
+        aiRunToken = runToken
+        aiCurrentAction = action
+        if let customPrompt {
+            aiCustomPrompt = customPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        aiTitleLabel?.stringValue = action == .custom ? "Custom Prompt" : action.title
+        aiPromptField?.isHidden = (action != .custom)
+        if action == .custom {
+            aiPromptField?.stringValue = aiCustomPrompt
+        }
+        for (a, btn) in aiActionButtons {
+            btn.state = (a == action) ? .on : .off
+        }
+        layoutAIResultArea(for: action)
+
         aiResultText = ""
-        aiResultTextView?.string = ""
+        aiResultTextView?.string = "…"
         aiSpinner?.startAnimation(nil)
         aiCopyButton?.isEnabled = false
         aiPasteButton?.isEnabled = false
+        aiSaveButton?.isEnabled = false
+        aiRegenButton?.isEnabled = false
 
-        // If unavailable, surface the reason inline instead of streaming
         let availability = AppleIntelligenceProvider.shared.currentAvailability()
-        guard availability == .available else {
+        guard availability.isUsable else {
             aiSpinner?.stopAnimation(nil)
             aiResultTextView?.string = "⚠️  \(availability.headline)\n\n\(availability.hint)"
+            aiRegenButton?.isEnabled = true
             return
         }
+
+        if action == .custom, aiCustomPrompt.isEmpty {
+            aiSpinner?.stopAnimation(nil)
+            aiResultTextView?.string = "✏️ Type your prompt above and press Return (or Re-run)."
+            aiRegenButton?.isEnabled = true
+            makeFirstResponder(aiPromptField)
+            return
+        }
+
+        let runAction = action
+        let runText = text
+        let runCustom = (action == .custom) ? aiCustomPrompt : nil
 
         aiTask = Task { [weak self] in
             guard let self = self else { return }
             do {
-                let stream = AppleIntelligenceProvider.shared.stream(action, on: text)
-                for try await snapshot in stream {
-                    if Task.isCancelled { break }
+                let stream = AppleIntelligenceProvider.shared.stream(
+                    runAction,
+                    on: runText,
+                    customPrompt: runCustom
+                )
+                for try await update in stream {
+                    if Task.isCancelled { return }
                     await MainActor.run {
-                        self.aiResultText = snapshot
-                        self.aiResultTextView?.string = snapshot
-                        self.aiResultTextView?.scrollToEndOfDocument(nil)
+                        guard self.aiRunToken == runToken else { return }
+                        self.aiResultText = update.text
+                        self.aiResultTextView?.string = update.text
+                        if update.isFinal {
+                            self.aiResultTextView?.scrollToEndOfDocument(nil)
+                        }
                     }
                 }
             } catch {
+                if Task.isCancelled { return }
+                if let aiErr = error as? AIError, case .cancelled = aiErr { return }
                 let message = (error as? AIError)?.errorDescription ?? error.localizedDescription
                 await MainActor.run {
+                    guard self.aiRunToken == runToken else { return }
                     self.aiResultTextView?.string = "⚠️  \(message)"
+                    self.aiResultText = ""
                 }
             }
             await MainActor.run {
+                guard self.aiRunToken == runToken else { return }
                 self.aiSpinner?.stopAnimation(nil)
                 let hasText = !self.aiResultText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && self.aiResultText != "…"
                 self.aiCopyButton?.isEnabled = hasText
                 self.aiPasteButton?.isEnabled = hasText
+                self.aiSaveButton?.isEnabled = hasText
                 self.aiRegenButton?.isEnabled = true
             }
         }
     }
 
+    /// Shrink / grow the result scroll view when the custom prompt field appears.
+    private func layoutAIResultArea(for action: AIAction) {
+        guard let overlay = aiOverlay,
+              let scroll = overlay.subviews.first(where: { $0.identifier?.rawValue == "aiResultScroll" })
+        else { return }
+        let topBarH: CGFloat = 38
+        let chipBarH: CGFloat = 34
+        let promptBarH: CGFloat = 30
+        let actionBarH: CGFloat = 46
+        let overlayH = overlay.bounds.height
+        let promptReserve: CGFloat = (action == .custom) ? promptBarH : 0
+        let resultY = actionBarH + 4
+        let resultH = overlayH - topBarH - chipBarH - promptReserve - actionBarH - 8
+        scroll.frame = NSRect(x: 12, y: resultY, width: windowWidth - 24, height: max(60, resultH))
+        if let prompt = aiPromptField {
+            prompt.frame.origin.y = overlayH - topBarH - chipBarH - promptBarH + 4
+        }
+    }
+
     @objc private func closeAIInline() {
+        aiRunToken = UUID()
         aiTask?.cancel()
         aiTask = nil
         guard let overlay = aiOverlay else { return }
@@ -1378,11 +1535,42 @@ extension ClipboardWindow {
             self?.aiCopyButton = nil
             self?.aiPasteButton = nil
             self?.aiRegenButton = nil
+            self?.aiSaveButton = nil
+            self?.aiTitleLabel = nil
+            self?.aiPromptField = nil
+            self?.aiActionButtons.removeAll()
             // Restore search-field focus so typing keeps working
             if let s = self?.searchField {
                 self?.makeFirstResponder(s)
             }
         })
+    }
+
+    @objc private func aiChipTapped(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue,
+              let action = AIAction(rawValue: id) else { return }
+        if action == .custom {
+            // Ask for a prompt if we don't have one yet; otherwise reuse & re-run.
+            if aiCustomPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if let prompt = askForCustomPrompt() {
+                    startAIStream(text: aiInputText, action: .custom, customPrompt: prompt)
+                }
+            } else {
+                startAIStream(text: aiInputText, action: .custom, customPrompt: aiCustomPrompt)
+            }
+            return
+        }
+        guard action != aiCurrentAction || aiTask == nil else { return }
+        startAIStream(text: aiInputText, action: action)
+    }
+
+    @objc private func aiCustomPromptSubmitted(_ sender: NSTextField) {
+        let prompt = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        startAIStream(text: aiInputText, action: .custom, customPrompt: prompt)
     }
 
     @objc private func aiCopyTapped() {
@@ -1407,19 +1595,37 @@ extension ClipboardWindow {
         }
     }
 
+    @objc private func aiSaveTapped() {
+        let result = aiResultText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !result.isEmpty else { return }
+        // Push into history without touching the system pasteboard, so we
+        // don't steal whatever the user currently has copied.
+        ClipboardManager.shared.addAIResult(result)
+        aiSaveButton?.title = "Saved"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            self?.aiSaveButton?.title = "Save"
+            self?.refreshClipboardList()
+        }
+    }
+
     @objc private func aiOpenFullTapped() {
         let text = aiInputText
         let action = aiCurrentAction
+        let custom = aiCustomPrompt
         closeAIInline()
         // Slight delay so the inline panel finishes its fade before the
         // standalone window pops up.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-            AIDemoWindow.show(prefillText: text, autoRun: action)
+            AIDemoWindow.show(prefillText: text, autoRun: action, customPrompt: custom)
         }
     }
 
     @objc private func aiRegenerateTapped() {
-        startAIStream(text: aiInputText, action: aiCurrentAction)
+        if aiCurrentAction == .custom, let field = aiPromptField {
+            let typed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !typed.isEmpty { aiCustomPrompt = typed }
+        }
+        startAIStream(text: aiInputText, action: aiCurrentAction, customPrompt: aiCustomPrompt)
     }
 
     private var isAIInlineVisible: Bool { aiOverlay != nil }
@@ -1513,35 +1719,35 @@ extension ClipboardWindow {
             height: containerHeight
         ))
         
-        let tileSize: CGFloat = 44
+        let tileSize: CGFloat = 48
         let tile = NSView(frame: NSRect(x: (containerWidth - tileSize) / 2, y: containerHeight - tileSize, width: tileSize, height: tileSize))
         tile.wantsLayer = true
-        tile.layer?.cornerRadius = 11
+        tile.layer?.cornerRadius = 14
         tile.layer?.cornerCurve = .continuous
-        tile.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
-        tile.layer?.borderWidth = 0.5
-        tile.layer?.borderColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        tile.layer?.backgroundColor = LiquidGlass.emptyTileFill.cgColor
+        tile.layer?.borderWidth = LiquidGlass.hairline
+        tile.layer?.borderColor = LiquidGlass.wellStroke.cgColor
         container.addSubview(tile)
         
         let icon = NSImageView(frame: tile.bounds)
-        let cfg = NSImage.SymbolConfiguration(pointSize: 18, weight: .regular)
+        let cfg = NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
         icon.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
-        icon.contentTintColor = NSColor.white.withAlphaComponent(0.7)
+        icon.contentTintColor = LiquidGlass.secondaryText
         icon.imageAlignment = .alignCenter
         tile.addSubview(icon)
         
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        titleLabel.textColor = NSColor.white.withAlphaComponent(0.9)
+        titleLabel.textColor = LiquidGlass.primaryText
         titleLabel.alignment = .center
-        titleLabel.frame = NSRect(x: 0, y: containerHeight - tileSize - 24, width: containerWidth, height: 18)
+        titleLabel.frame = NSRect(x: 0, y: containerHeight - tileSize - 26, width: containerWidth, height: 18)
         container.addSubview(titleLabel)
         
         let subtitleLabel = NSTextField(labelWithString: subtitle)
         subtitleLabel.font = NSFont.systemFont(ofSize: 11.5)
-        subtitleLabel.textColor = NSColor.white.withAlphaComponent(0.5)
+        subtitleLabel.textColor = LiquidGlass.secondaryText
         subtitleLabel.alignment = .center
-        subtitleLabel.frame = NSRect(x: 0, y: containerHeight - tileSize - 42, width: containerWidth, height: 16)
+        subtitleLabel.frame = NSRect(x: 0, y: containerHeight - tileSize - 44, width: containerWidth, height: 16)
         container.addSubview(subtitleLabel)
         
         return container
@@ -1552,15 +1758,15 @@ extension ClipboardWindow {
         footer.wantsLayer = true
         
         let divider = CALayer()
-        divider.frame = CGRect(x: 14, y: footerHeight - 1, width: windowWidth - 28, height: 0.5)
-        divider.backgroundColor = NSColor.white.withAlphaComponent(0.07).cgColor
+        divider.frame = CGRect(x: 16, y: footerHeight - 1, width: windowWidth - 32, height: LiquidGlass.hairline)
+        divider.backgroundColor = LiquidGlass.separator.cgColor
         footer.layer?.addSublayer(divider)
         
         let label = NSTextField(labelWithString: text)
         label.font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
-        label.textColor = NSColor.white.withAlphaComponent(0.5)
+        label.textColor = LiquidGlass.tertiaryText
         label.alignment = .center
-        label.frame = NSRect(x: 0, y: 6, width: windowWidth, height: 16)
+        label.frame = NSRect(x: 0, y: 7, width: windowWidth, height: 16)
         footer.addSubview(label)
         
         return footer
@@ -1720,9 +1926,6 @@ class DropZoneNSView: NSView {
 
 class NSClickableView: NSView {
     var onClick: (() -> Void)?
-    private let normalColor: NSColor = .clear
-    private let hoverColor: NSColor = NSColor.white.withAlphaComponent(0.10)
-    private var highlightColor: NSColor { NSColor.controlAccentColor.withAlphaComponent(0.35) }
     private var isHighlighted: Bool = false
     private var isHovering: Bool = false
     
@@ -1741,7 +1944,6 @@ class NSClickableView: NSView {
     }
     
     /// Set by the parent window when the row is selected via keyboard navigation.
-    /// Persists through hover changes – hover only nudges the alpha slightly.
     func setHighlighted(_ highlighted: Bool) {
         isHighlighted = highlighted
         applyState(animated: true)
@@ -1750,11 +1952,9 @@ class NSClickableView: NSView {
     private func applyState(animated: Bool) {
         let target: NSColor
         if isHighlighted {
-            target = isHovering
-                ? NSColor.controlAccentColor.withAlphaComponent(0.45)
-                : highlightColor
+            target = isHovering ? LiquidGlass.rowHighlightHover : LiquidGlass.rowHighlight
         } else {
-            target = isHovering ? hoverColor : normalColor
+            target = isHovering ? LiquidGlass.rowHover : .clear
         }
         if animated {
             animateBackground(to: target)
@@ -1787,8 +1987,6 @@ class DraggableTrayItemView: NSView, NSDraggingSource {
     var trayItem: TrayItem?
     var onClick: (() -> Void)?
     private var dragStartLocation: NSPoint?
-    private let hoverColor: NSColor = NSColor.white.withAlphaComponent(0.10)
-    private let normalColor: NSColor = .clear
     
     override var mouseDownCanMoveWindow: Bool { false }
     
@@ -1861,11 +2059,11 @@ class DraggableTrayItemView: NSView, NSDraggingSource {
     }
     
     override func mouseEntered(with event: NSEvent) {
-        layer?.backgroundColor = hoverColor.cgColor
+        layer?.backgroundColor = LiquidGlass.rowHover.cgColor
     }
     
     override func mouseExited(with event: NSEvent) {
-        layer?.backgroundColor = normalColor.cgColor
+        layer?.backgroundColor = NSColor.clear.cgColor
     }
     
     override func updateTrackingAreas() {
@@ -1914,11 +2112,11 @@ class HoverButton: NSButton {
     private func applyTint(animated: Bool) {
         let tint: NSColor
         if isSelectedState {
-            tint = .white
+            tint = LiquidGlass.primaryText
         } else if isHovering {
-            tint = NSColor.white.withAlphaComponent(0.85)
+            tint = LiquidGlass.secondaryText
         } else {
-            tint = NSColor.white.withAlphaComponent(0.45)
+            tint = LiquidGlass.tertiaryText
         }
         contentTintColor = tint
     }
@@ -1929,9 +2127,9 @@ class HoverIconButton: NSButton {
     var symbolName: String = "circle"
     var symbolPointSize: CGFloat = 13
     var symbolWeight: NSFont.Weight = .regular
-    var normalTint: NSColor = NSColor.white.withAlphaComponent(0.55)
-    var hoverTint: NSColor = NSColor.white.withAlphaComponent(0.95)
-    var hoverBackground: NSColor = NSColor.white.withAlphaComponent(0.10)
+    var normalTint: NSColor = LiquidGlass.iconMuted
+    var hoverTint: NSColor = LiquidGlass.iconPrimary
+    var hoverBackground: NSColor = LiquidGlass.rowHover
     
     private var isHovering: Bool = false
     
@@ -2009,7 +2207,7 @@ class HoverEmojiButton: NSButton {
     
     override func mouseEntered(with event: NSEvent) {
         isHovering = true
-        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.12).cgColor
+        layer?.backgroundColor = LiquidGlass.rowHover.cgColor
     }
     
     override func mouseExited(with event: NSEvent) {
@@ -2020,12 +2218,14 @@ class HoverEmojiButton: NSButton {
 
 // MARK: - AI Invocation
 
-/// Bundle of (input text, AI action) carried via NSMenuItem.representedObject.
+/// Bundle of (input text, AI action [, custom prompt]) carried via NSMenuItem.representedObject.
 fileprivate final class AIInvocation: NSObject {
     let text: String
     let action: AIAction
-    init(text: String, action: AIAction) {
+    let customPrompt: String?
+    init(text: String, action: AIAction, customPrompt: String? = nil) {
         self.text = text
         self.action = action
+        self.customPrompt = customPrompt
     }
 }

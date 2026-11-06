@@ -147,7 +147,7 @@ struct ClipboardItemRow: View {
             Spacer()
             
             // Index number
-            Text("\\(index + 1)")
+            Text("\(index + 1)")
                 .foregroundColor(.gray)
                 .font(.caption)
                 .padding(.horizontal, 8)
@@ -179,13 +179,13 @@ struct ClipboardItemRow: View {
             return "Just now"
         } else if seconds < 3600 {
             let minutes = seconds / 60
-            return "\\(minutes)m ago"
+            return "\(minutes)m ago"
         } else if seconds < 86400 {
             let hours = seconds / 3600
-            return "\\(hours)h ago"
+            return "\(hours)h ago"
         } else {
             let days = seconds / 86400
-            return "\\(days)d ago"
+            return "\(days)d ago"
         }
     }
 }
